@@ -23,7 +23,7 @@ use crate::arrow::datatypes::{DataType, Field, Schema};
 use crate::error::{ExecutionError, Result};
 use crate::logicalplan::Expr::Literal;
 use crate::logicalplan::ScalarValue;
-use crate::logicalplan::{Expr, LogicalPlan};
+use crate::logicalplan::{Expr, LogicalPlan, PartitionMeta};
 use crate::table::*;
 
 /// Implementation of Table API
@@ -73,6 +73,7 @@ impl Table for TableImpl {
                 expr: expr_list.clone(),
                 input: self.plan.clone(),
                 schema: Arc::new(Schema::new(field)),
+                partition_meta: PartitionMeta::default(),
             },
         ))))
     }
@@ -82,6 +83,7 @@ impl Table for TableImpl {
         Ok(Arc::new(TableImpl::new(Arc::new(LogicalPlan::Selection {
             expr,
             input: self.plan.clone(),
+            partition_meta: PartitionMeta::default(),
         }))))
     }
 
@@ -96,6 +98,7 @@ impl Table for TableImpl {
             group_expr,
             aggr_expr,
             schema: Arc::new(Schema::new(vec![])),
+            partition_meta: PartitionMeta::default(),
         }))))
     }
 
@@ -105,6 +108,7 @@ impl Table for TableImpl {
             expr: Literal(ScalarValue::UInt32(n as u32)),
             input: self.plan.clone(),
             schema: self.plan.schema().clone(),
+            partition_meta: PartitionMeta::default(),
         }))))
     }
 

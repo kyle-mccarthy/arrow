@@ -40,6 +40,7 @@ impl OptimizerRule for TypeCoercionRule {
                 expr,
                 input,
                 schema,
+                partition_meta,
             } => Ok(Arc::new(LogicalPlan::Projection {
                 expr: expr
                     .iter()
@@ -47,18 +48,23 @@ impl OptimizerRule for TypeCoercionRule {
                     .collect::<Result<Vec<_>>>()?,
                 input: self.optimize(input)?,
                 schema: schema.clone(),
+                partition_meta: partition_meta.clone(),
             })),
-            LogicalPlan::Selection { expr, input } => {
-                Ok(Arc::new(LogicalPlan::Selection {
-                    expr: rewrite_expr(expr, input.schema())?,
-                    input: self.optimize(input)?,
-                }))
-            }
+            LogicalPlan::Selection {
+                expr,
+                input,
+                partition_meta,
+            } => Ok(Arc::new(LogicalPlan::Selection {
+                expr: rewrite_expr(expr, input.schema())?,
+                input: self.optimize(input)?,
+                partition_meta: partition_meta.clone(),
+            })),
             LogicalPlan::Aggregate {
                 input,
                 group_expr,
                 aggr_expr,
                 schema,
+                partition_meta,
             } => Ok(Arc::new(LogicalPlan::Aggregate {
                 group_expr: group_expr
                     .iter()
@@ -70,6 +76,7 @@ impl OptimizerRule for TypeCoercionRule {
                     .collect::<Result<Vec<_>>>()?,
                 input: self.optimize(input)?,
                 schema: schema.clone(),
+                partition_meta: partition_meta.clone(),
             })),
             LogicalPlan::TableScan { .. } => Ok(Arc::new(plan.clone())),
             LogicalPlan::EmptyRelation { .. } => Ok(Arc::new(plan.clone())),

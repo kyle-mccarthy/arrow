@@ -91,6 +91,8 @@ impl ExecutionPlan for HashAggregateExec {
             })
             .collect();
 
+        dbg!(partitions.len());
+
         Ok(partitions)
     }
 }

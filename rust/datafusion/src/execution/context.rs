@@ -277,6 +277,7 @@ impl ExecutionContext {
                 group_expr,
                 aggr_expr,
                 schema,
+                partition_meta,
             } => {
                 let input = self.create_physical_plan(input, batch_size)?;
                 let input_schema = input.as_ref().schema().clone();

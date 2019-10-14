@@ -19,8 +19,7 @@
 //! loaded into memory
 
 use crate::error::{ExecutionError, Result};
-use crate::logicalplan::Expr;
-use crate::logicalplan::LogicalPlan;
+use crate::logicalplan::{Expr, LogicalPlan, PartitionMeta};
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::utils;
 use arrow::datatypes::{Field, Schema};
@@ -56,6 +55,7 @@ impl ProjectionPushDown {
                 expr,
                 input,
                 schema,
+                partition_meta,
             } => {
                 // collect all columns referenced by projection expressions
                 utils::exprlist_to_column_indices(&expr, accum);
@@ -70,9 +70,14 @@ impl ProjectionPushDown {
                     expr: new_expr,
                     input,
                     schema: schema.clone(),
+                    partition_meta: partition_meta.clone(),
                 }))
             }
-            LogicalPlan::Selection { expr, input } => {
+            LogicalPlan::Selection {
+                expr,
+                input,
+                partition_meta,
+            } => {
                 // collect all columns referenced by filter expression
                 utils::expr_to_column_indices(expr, accum);
 
@@ -85,6 +90,7 @@ impl ProjectionPushDown {
                 Ok(Arc::new(LogicalPlan::Selection {
                     expr: new_expr,
                     input,
+                    partition_meta: partition_meta.clone(),
                 }))
             }
             LogicalPlan::Aggregate {
@@ -92,6 +98,7 @@ impl ProjectionPushDown {
                 group_expr,
                 aggr_expr,
                 schema,
+                partition_meta,
             } => {
                 // collect all columns referenced by grouping and aggregate expressions
                 utils::exprlist_to_column_indices(&group_expr, accum);
@@ -109,12 +116,14 @@ impl ProjectionPushDown {
                     group_expr: new_group_expr,
                     aggr_expr: new_aggr_expr,
                     schema: schema.clone(),
+                    partition_meta: partition_meta.clone(),
                 }))
             }
             LogicalPlan::Sort {
                 expr,
                 input,
                 schema,
+                partition_meta,
             } => {
                 // collect all columns referenced by sort expressions
                 utils::exprlist_to_column_indices(&expr, accum);
@@ -129,6 +138,7 @@ impl ProjectionPushDown {
                     expr: new_expr,
                     input,
                     schema: schema.clone(),
+                    partition_meta: partition_meta.clone(),
                 }))
             }
             LogicalPlan::EmptyRelation { schema } => {
@@ -195,10 +205,12 @@ impl ProjectionPushDown {
                 expr,
                 input,
                 schema,
+                partition_meta,
             } => Ok(Arc::new(LogicalPlan::Limit {
                 expr: expr.clone(),
                 input: input.clone(),
                 schema: schema.clone(),
+                partition_meta: partition_meta.clone(),
             })),
             LogicalPlan::CreateExternalTable {
                 schema,
@@ -212,6 +224,10 @@ impl ProjectionPushDown {
                 location: location.to_string(),
                 file_type: file_type.clone(),
                 header_row: *header_row,
+            })),
+            LogicalPlan::Merge { schema, input } => Ok(Arc::new(LogicalPlan::Merge {
+                schema: schema.clone(),
+                input: input.clone(),
             })),
         }
     }
@@ -302,6 +318,7 @@ mod tests {
                 false,
             )])),
             input: Arc::new(table_scan),
+            partition_meta: PartitionMeta::default(),
         };
 
         assert_optimized_plan_eq(&aggregate, "Aggregate: groupBy=[[]], aggr=[[#0]]\n  TableScan: test projection=Some([1])");
@@ -319,6 +336,7 @@ mod tests {
                 Field::new("MAX(b)", DataType::UInt32, false),
             ])),
             input: Arc::new(table_scan),
+            partition_meta: PartitionMeta::default(),
         };
 
         assert_optimized_plan_eq(&aggregate, "Aggregate: groupBy=[[#1]], aggr=[[#0]]\n  TableScan: test projection=Some([1, 2])");
@@ -331,6 +349,7 @@ mod tests {
         let selection = Selection {
             expr: Column(2),
             input: Arc::new(table_scan),
+            partition_meta: PartitionMeta::default(),
         };
 
         let aggregate = Aggregate {
@@ -342,6 +361,7 @@ mod tests {
                 false,
             )])),
             input: Arc::new(selection),
+            partition_meta: PartitionMeta::default(),
         };
 
         assert_optimized_plan_eq(&aggregate, "Aggregate: groupBy=[[]], aggr=[[#0]]\n  Selection: #1\n    TableScan: test projection=Some([1, 2])");
@@ -362,6 +382,7 @@ mod tests {
                 DataType::Float64,
                 false,
             )])),
+            partition_meta: PartitionMeta::default(),
         };
 
         assert_optimized_plan_eq(
@@ -382,6 +403,7 @@ mod tests {
                 Field::new("a", DataType::UInt32, false),
                 Field::new("b", DataType::UInt32, false),
             ])),
+            partition_meta: PartitionMeta::default(),
         };
 
         let optimized_plan = optimize(&projection);

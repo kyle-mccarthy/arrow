@@ -381,6 +381,17 @@ impl fmt::Debug for Expr {
     }
 }
 
+#[derive(Clone)]
+pub struct PartitionMeta {
+    count: usize,
+}
+
+impl Default for PartitionMeta {
+    fn default() -> PartitionMeta {
+        PartitionMeta { count: 0 }
+    }
+}
+
 /// The LogicalPlan represents different types of relations (such as Projection,
 /// Selection, etc) and can be created by the SQL query planner and the DataFrame API.
 #[derive(Clone)]
@@ -393,6 +404,8 @@ pub enum LogicalPlan {
         input: Arc<LogicalPlan>,
         /// The schema description
         schema: Arc<Schema>,
+        /// Information about input partitioning
+        partition_meta: PartitionMeta,
     },
     /// A Selection (essentially a WHERE clause with a predicate expression)
     Selection {
@@ -400,6 +413,8 @@ pub enum LogicalPlan {
         expr: Expr,
         /// The incoming logic plan
         input: Arc<LogicalPlan>,
+        /// Information about input partitioning
+        partition_meta: PartitionMeta,
     },
     /// Represents a list of aggregate expressions with optional grouping expressions
     Aggregate {
@@ -411,6 +426,8 @@ pub enum LogicalPlan {
         aggr_expr: Vec<Expr>,
         /// The schema description
         schema: Arc<Schema>,
+        /// Information about input partitioning
+        partition_meta: PartitionMeta,
     },
     /// Represents a list of sort expressions to be applied to a relation
     Sort {
@@ -420,6 +437,8 @@ pub enum LogicalPlan {
         input: Arc<LogicalPlan>,
         /// The schema description
         schema: Arc<Schema>,
+        /// Information about input partitioning
+        partition_meta: PartitionMeta,
     },
     /// A table scan against a table that has been registered on a context
     TableScan {
@@ -447,6 +466,8 @@ pub enum LogicalPlan {
         input: Arc<LogicalPlan>,
         /// The schema description
         schema: Arc<Schema>,
+        /// Information about input partitioning
+        partition_meta: PartitionMeta,
     },
     /// Represents a create external table expression.
     CreateExternalTable {
@@ -460,6 +481,11 @@ pub enum LogicalPlan {
         file_type: FileType,
         /// Whether the CSV file contains a header
         header_row: bool,
+    },
+    /// Represents a merge of partitions
+    Merge {
+        schema: Arc<Schema>,
+        input: Arc<LogicalPlan>,
     },
 }
 
@@ -477,6 +503,7 @@ impl LogicalPlan {
             LogicalPlan::Sort { schema, .. } => &schema,
             LogicalPlan::Limit { schema, .. } => &schema,
             LogicalPlan::CreateExternalTable { schema, .. } => &schema,
+            LogicalPlan::Merge { schema, .. } => &schema,
         }
     }
 }
@@ -556,6 +583,7 @@ impl LogicalPlan {
             LogicalPlan::CreateExternalTable { ref name, .. } => {
                 write!(f, "CreateExternalTable: {:?}", name)
             }
+            LogicalPlan::Merge { ref input, .. } => write!(f, "Merge: {:?}", input),
         }
     }
 }

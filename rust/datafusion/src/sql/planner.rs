@@ -21,7 +21,9 @@ use std::string::String;
 use std::sync::Arc;
 
 use crate::error::{ExecutionError, Result};
-use crate::logicalplan::{Expr, FunctionMeta, LogicalPlan, Operator, ScalarValue};
+use crate::logicalplan::{
+    Expr, FunctionMeta, LogicalPlan, Operator, PartitionMeta, ScalarValue,
+};
 use crate::optimizer::utils;
 
 use arrow::datatypes::*;
@@ -76,6 +78,7 @@ impl SqlToRel {
                     &Some(ref filter_expr) => Some(LogicalPlan::Selection {
                         expr: self.sql_to_rex(&filter_expr, &input_schema.clone())?,
                         input: input.clone(),
+                        partition_meta: PartitionMeta::default(),
                     }),
                     _ => None,
                 };
@@ -117,12 +120,15 @@ impl SqlToRel {
                         input_schema,
                     )?);
 
+                    dbg!(&aggregate_input);
+
                     //TODO: selection, projection, everything else
                     Ok(Arc::new(LogicalPlan::Aggregate {
                         input: aggregate_input,
                         group_expr,
                         aggr_expr,
                         schema: Arc::new(aggr_schema),
+                        partition_meta: PartitionMeta::default(),
                     }))
                 } else {
                     let projection_input: Arc<LogicalPlan> = match selection_plan {
@@ -138,6 +144,7 @@ impl SqlToRel {
                         expr: expr,
                         input: projection_input,
                         schema: projection_schema.clone(),
+                        partition_meta: PartitionMeta::default(),
                     };
 
                     if let &Some(_) = having {
@@ -166,6 +173,7 @@ impl SqlToRel {
                                 expr: order_by_rex?,
                                 input: Arc::new(projection.clone()),
                                 schema: input_schema.clone(),
+                                partition_meta: PartitionMeta::default(),
                             }
                         }
                         _ => projection,
@@ -190,6 +198,7 @@ impl SqlToRel {
                                 expr: limit_rex,
                                 input: Arc::new(order_by_plan.clone()),
                                 schema: input_schema.clone(),
+                                partition_meta: PartitionMeta::default(),
                             }
                         }
                         _ => order_by_plan,
