@@ -32,6 +32,7 @@ RUN \
     bison \
     boost169-devel \
     brotli-devel \
+    bzip2-devel \
     cmake3 \
     double-conversion-devel \
     flex \
