@@ -1,75 +1,54 @@
 use crate::error::{ExecutionError, Result};
 use crate::logicalplan::ScalarValue;
-use std::convert::TryInto;
 
-macro_rules! next_arg {
-    ($ARGS:ident, $TYPE:ty) => {{
-        let arg: ScalarValue = $ARGS.next().ok_or_else(|| {
-            ExecutionError::General("Expected additional arg found None".to_string())
-        })?;
+use arrow::array::{ArrayDataRef, ArrayRef};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
 
-        let arg: Option<$TYPE> = arg.try_into()?;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
-        arg.ok_or_else(|| ExecutionError::General("Expected non-null value".to_string()))
-    }};
+pub struct ScalarArray {
+    data: ArrayDataRef,
+    value_offsets: *const i32,
+    value_data: *const u8,
 }
 
-/// TODO :: ScalarFunction definition
-pub type ScalarFunction = Box<dyn Fn(Vec<ScalarValue>) -> Result<ScalarValue>>;
+/// Params for the UDF
+pub struct Params {
+    inner: Vec<Field>,
+    map: BTreeMap<String, usize>,
+}
 
-macro_rules! impl_compose {
-    ($FN:ident, $($ARG:ident),*) => {
-        /// Bind UDF with parameters
-        pub fn $FN<$($ARG,)* R: Into<ScalarValue>, F: 'static + Fn($($ARG,)*) -> R>(f: F) -> ScalarFunction where
-            $(ScalarValue: TryInto<Option<$ARG>, Error = ExecutionError>,)*
-        {
-            Box::new(move |args: Vec<ScalarValue>| {
-                let mut args: std::vec::IntoIter<ScalarValue> = args.into_iter();
+impl Params {
+    /// Create function params from list of fields
+    pub fn new(fields: Vec<Field>) -> Params {
+        let mut map: BTreeMap<String, usize> = BTreeMap::new();
 
-                Ok(
-                    f(
-                        $(
-                            next_arg!(args, $ARG)?,
-                        )*
-                    ).into()
-                )
-            })
-        }
+        fields.iter().enumerate().for_each(|(k, v)| {
+            map.insert(v.name().clone(), k);
+        });
 
+        Params { inner: fields, map }
     }
 }
 
-impl_compose!(compose1, A);
-impl_compose!(compose2, A, B);
-
-// /// Bind UDF with single parameter
-// pub fn compose1<T, R: Into<ScalarValue>, F: 'static + Fn(T) -> R>(f: F) -> ScalarFunction
-// where
-//     ScalarValue: TryInto<Option<T>, Error = ExecutionError>,
-// {
-//     Box::new(move |args: Vec<ScalarValue>| {
-//         let mut args = args.into_iter();
-
-//         let arg1: T = next_arg!(args)?;
-
-//         Ok(f(arg1).into())
-//     })
-// }
-
-#[cfg(test)]
-mod udf_tests {
-    use super::*;
-
-    fn adds_10(x: u32) -> u32 {
-        x + 10u32
+impl From<Vec<Field>> for Params {
+    fn from(fields: Vec<Field>) -> Self {
+        Params::new(fields)
     }
+}
 
-    #[test]
-    fn it() {
-        let f = compose1(adds_10);
-        let v = vec![f];
+/// Context of a functions call
+pub struct CallContext {
+    data: Vec<ArrayRef>,
+    schema: Arc<Schema>,
+    iteration: usize,
+}
 
-        let res = v[0](vec![ScalarValue::UInt32(20)]);
-        assert_eq!(res.unwrap(), ScalarValue::UInt32(30));
-    }
+impl CallContext {}
+
+pub trait UserDefinedFunction {
+    fn evaluate(&self, ctx: &CallContext);
+    fn is_aggregate(&self) -> bool;
 }

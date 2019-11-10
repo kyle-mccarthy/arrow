@@ -1,0 +1,11 @@
+[package]
+name = "derive_df"
+version = "0.1.0"
+authors = ["Kyle McCarthy <km@kylemccarthy.io>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+derive_internals = { path = "../derive_internals" }
+proc-macro-hack = "0.5"

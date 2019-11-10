@@ -39,3 +39,6 @@ pub mod table;
 
 #[cfg(test)]
 pub mod test;
+
+#[cfg(feature = "derive")]
+pub use derive_df;
