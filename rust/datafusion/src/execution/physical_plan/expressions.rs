@@ -25,20 +25,24 @@ use crate::error::{ExecutionError, Result};
 use crate::execution::physical_plan::common::get_scalar_value;
 use crate::execution::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::logicalplan::{Operator, ScalarValue};
+use arrow::array::{ArrayData, PrimitiveArray};
 use arrow::array::{
     ArrayRef, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array,
-    Int64Array, Int8Array, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Int64Array, Int8Array, StringArray, UInt16Array, UInt32Array, UInt64Array,
+    UInt8Array,
 };
 use arrow::array::{
     Float32Builder, Float64Builder, Int16Builder, Int32Builder, Int64Builder,
-    Int8Builder, UInt16Builder, UInt32Builder, UInt64Builder, UInt8Builder,
+    Int8Builder, StringBuilder, UInt16Builder, UInt32Builder, UInt64Builder,
+    UInt8Builder,
 };
+use arrow::buffer::Buffer;
 use arrow::compute;
 use arrow::compute::kernels::arithmetic::{add, divide, multiply, subtract};
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::cast::cast;
 use arrow::compute::kernels::comparison::{eq, gt, gt_eq, lt, lt_eq, neq};
-use arrow::datatypes::{DataType, Schema};
+use arrow::datatypes::{BooleanType, DataType, Schema, ToByteSlice};
 use arrow::record_batch::RecordBatch;
 
 /// Represents the column at a given index in a RecordBatch
@@ -864,6 +868,10 @@ macro_rules! compute_op {
     }};
 }
 
+// macro_rules! str_cmp_op {
+//     ($LEFT:expr, $RIGHT:expr, $OP:ident, $DT)
+// }
+
 /// Invoke a compute kernel on a pair of arrays
 macro_rules! binary_array_op {
     ($LEFT:expr, $RIGHT:expr, $OP:ident) => {{
@@ -900,6 +908,60 @@ macro_rules! boolean_op {
         Ok(Arc::new($OP(&ll, &rr)?))
     }};
 }
+
+fn str_cmp(left: ArrayRef, right: ArrayRef, op: &Operator) -> Result<ArrayRef> {
+    let lhs = left
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("str_cmp failed to downcast array");
+    let rhs = right
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("str_cmp failed to downcast array");
+
+    let cmp_op: Result<Box<dyn Fn(&str, &str) -> bool>> = match op {
+        Operator::Eq => Ok(Box::new(|a, b| a == b)),
+        Operator::NotEq => Ok(Box::new(|a, b| a != b)),
+        Operator::Gt => Ok(Box::new(|a, b| a > b)),
+        Operator::GtEq => Ok(Box::new(|a, b| a >= b)),
+        Operator::Lt => Ok(Box::new(|a, b| a < b)),
+        Operator::LtEq => Ok(Box::new(|a, b| a <= b)),
+        _ => Err(ExecutionError::General(format!(
+            "{:?} is not supported on string data types",
+            op
+        ))),
+    };
+
+    let cmp_op = cmp_op?;
+
+    let null_bit_buffer = match (left.data().null_bitmap(), right.data().null_bitmap()) {
+        (None, None) => None,
+        (Some(l), None) => Some(l.clone().to_buffer()),
+        (None, Some(r)) => Some(r.clone().to_buffer()),
+        (Some(l), Some(r)) => Some((l & r).expect("failed").to_buffer()),
+    };
+
+    let mut values = Vec::with_capacity(left.len());
+
+    for i in 0..left.len() {
+        values.push(cmp_op(lhs.value(i), rhs.value(i)));
+    }
+
+    let data = ArrayData::new(
+        DataType::Boolean,
+        left.len(),
+        None,
+        null_bit_buffer,
+        left.offset(),
+        vec![Buffer::from(values.to_byte_slice())],
+        vec![],
+    );
+
+    Ok(Arc::new(PrimitiveArray::<BooleanType>::from(Arc::new(
+        data,
+    ))))
+}
+
 /// Binary expression
 pub struct BinaryExpr {
     left: Arc<dyn PhysicalExpr>,
@@ -938,42 +1000,56 @@ impl PhysicalExpr for BinaryExpr {
                 right.data_type()
             )));
         }
-        match &self.op {
-            Operator::Lt => binary_array_op!(left, right, lt),
-            Operator::LtEq => binary_array_op!(left, right, lt_eq),
-            Operator::Gt => binary_array_op!(left, right, gt),
-            Operator::GtEq => binary_array_op!(left, right, gt_eq),
-            Operator::Eq => binary_array_op!(left, right, eq),
-            Operator::NotEq => binary_array_op!(left, right, neq),
-            Operator::Plus => binary_array_op!(left, right, add),
-            Operator::Minus => binary_array_op!(left, right, subtract),
-            Operator::Multiply => binary_array_op!(left, right, multiply),
-            Operator::Divide => binary_array_op!(left, right, divide),
-            Operator::And => {
-                if left.data_type() == &DataType::Boolean {
-                    boolean_op!(left, right, and)
-                } else {
+
+        match left.data_type() {
+            DataType::Utf8 => {
+                if left.data_type() != right.data_type() {
                     return Err(ExecutionError::General(format!(
+                        "Cannot evaluate string literal expression {:?} with types {:?} and {:?}",
+                        self.op,
+                        left.data_type(),
+                        right.data_type()
+                   )));
+                }
+                str_cmp(left, right, &self.op)
+            }
+            _ => match &self.op {
+                Operator::Lt => binary_array_op!(left, right, lt),
+                Operator::LtEq => binary_array_op!(left, right, lt_eq),
+                Operator::Gt => binary_array_op!(left, right, gt),
+                Operator::GtEq => binary_array_op!(left, right, gt_eq),
+                Operator::Eq => binary_array_op!(left, right, eq),
+                Operator::NotEq => binary_array_op!(left, right, neq),
+                Operator::Plus => binary_array_op!(left, right, add),
+                Operator::Minus => binary_array_op!(left, right, subtract),
+                Operator::Multiply => binary_array_op!(left, right, multiply),
+                Operator::Divide => binary_array_op!(left, right, divide),
+                Operator::And => {
+                    if left.data_type() == &DataType::Boolean {
+                        boolean_op!(left, right, and)
+                    } else {
+                        return Err(ExecutionError::General(format!(
                         "Cannot evaluate binary expression {:?} with types {:?} and {:?}",
                         self.op,
                         left.data_type(),
                         right.data_type()
                     )));
+                    }
                 }
-            }
-            Operator::Or => {
-                if left.data_type() == &DataType::Boolean {
-                    boolean_op!(left, right, or)
-                } else {
-                    return Err(ExecutionError::General(format!(
+                Operator::Or => {
+                    if left.data_type() == &DataType::Boolean {
+                        boolean_op!(left, right, or)
+                    } else {
+                        return Err(ExecutionError::General(format!(
                         "Cannot evaluate binary expression {:?} with types {:?} and {:?}",
                         self.op,
                         left.data_type(),
                         right.data_type()
                     )));
+                    }
                 }
-            }
-            _ => Err(ExecutionError::General("Unsupported operator".to_string())),
+                _ => Err(ExecutionError::General("Unsupported operator".to_string())),
+            },
         }
     }
 }
@@ -1105,6 +1181,7 @@ impl PhysicalExpr for Literal {
             ScalarValue::Float64(value) => {
                 build_literal_array!(batch, Float64Builder, *value)
             }
+            ScalarValue::Utf8(value) => build_literal_array!(batch, StringBuilder, value),
             other => Err(ExecutionError::General(format!(
                 "Unsupported literal type {:?}",
                 other
