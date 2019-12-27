@@ -20,114 +20,116 @@
 #if defined(ARROW_R_WITH_ARROW)
 
 // [[arrow::export]]
-std::shared_ptr<arrow::dataset::DataSourceDiscovery> dataset___FSDSDiscovery__Make(
-    const std::shared_ptr<arrow::fs::FileSystem>& fs,
-    const std::shared_ptr<arrow::fs::Selector>& selector) {
-  std::shared_ptr<arrow::dataset::DataSourceDiscovery> discovery;
+std::shared_ptr<ds::DataSourceDiscovery> dataset___FSDSDiscovery__Make2(
+    const std::shared_ptr<fs::FileSystem>& fs,
+    const std::shared_ptr<fs::FileSelector>& selector,
+    const std::shared_ptr<ds::PartitionScheme>& partition_scheme) {
   // TODO(npr): add format as an argument, don't hard-code Parquet
-  auto format = std::make_shared<arrow::dataset::ParquetFileFormat>();
+  auto format = std::make_shared<ds::ParquetFileFormat>();
 
-  STOP_IF_NOT_OK(arrow::dataset::FileSystemDataSourceDiscovery::Make(fs.get(), *selector,
-                                                                     format, &discovery));
-  return discovery;
+  // TODO(fsaintjacques): Make options configurable
+  auto options = ds::FileSystemDiscoveryOptions{};
+  if (partition_scheme != nullptr) {
+    options.partition_scheme = partition_scheme;
+  }
+
+  return VALUE_OR_STOP(
+      ds::FileSystemDataSourceDiscovery::Make(fs, *selector, format, options));
 }
 
 // [[arrow::export]]
-std::shared_ptr<arrow::dataset::DataSource> dataset___DSDiscovery__Finish(
-    const std::shared_ptr<arrow::dataset::DataSourceDiscovery>& discovery) {
-  std::shared_ptr<arrow::dataset::DataSource> out;
-  STOP_IF_NOT_OK(discovery->Finish(&out));
-  return out;
+std::shared_ptr<ds::DataSourceDiscovery> dataset___FSDSDiscovery__Make1(
+    const std::shared_ptr<fs::FileSystem>& fs,
+    const std::shared_ptr<fs::FileSelector>& selector) {
+  return dataset___FSDSDiscovery__Make2(fs, selector, nullptr);
+}
+
+// [[arrow::export]]
+std::shared_ptr<ds::DataSource> dataset___DSDiscovery__Finish1(
+    const std::shared_ptr<ds::DataSourceDiscovery>& discovery) {
+  return VALUE_OR_STOP(discovery->Finish());
+}
+
+// [[arrow::export]]
+std::shared_ptr<ds::DataSource> dataset___DSDiscovery__Finish2(
+    const std::shared_ptr<ds::DataSourceDiscovery>& discovery,
+    const std::shared_ptr<arrow::Schema>& schema) {
+  return VALUE_OR_STOP(discovery->Finish(schema));
 }
 
 // [[arrow::export]]
 std::shared_ptr<arrow::Schema> dataset___DSDiscovery__Inspect(
-    const std::shared_ptr<arrow::dataset::DataSourceDiscovery>& discovery) {
-  std::shared_ptr<arrow::Schema> out;
-  STOP_IF_NOT_OK(discovery->Inspect(&out));
-  return out;
+    const std::shared_ptr<ds::DataSourceDiscovery>& discovery) {
+  return VALUE_OR_STOP(discovery->Inspect());
 }
 
 // [[arrow::export]]
-void dataset___DSDiscovery__SetPartitionScheme(
-    const std::shared_ptr<arrow::dataset::DataSourceDiscovery>& discovery,
-    const std::shared_ptr<arrow::dataset::PartitionScheme>& part) {
-  STOP_IF_NOT_OK(discovery->SetPartitionScheme(part));
-}
-
-// [[arrow::export]]
-std::shared_ptr<arrow::dataset::SchemaPartitionScheme> dataset___SchemaPartitionScheme(
+std::shared_ptr<ds::PartitionScheme> dataset___SchemaPartitionScheme(
     const std::shared_ptr<arrow::Schema>& schm) {
-  return std::make_shared<arrow::dataset::SchemaPartitionScheme>(schm);
+  return std::make_shared<ds::SchemaPartitionScheme>(schm);
 }
 
 // [[arrow::export]]
-std::shared_ptr<arrow::dataset::HivePartitionScheme> dataset___HivePartitionScheme(
+std::shared_ptr<ds::PartitionScheme> dataset___HivePartitionScheme(
     const std::shared_ptr<arrow::Schema>& schm) {
-  return std::make_shared<arrow::dataset::HivePartitionScheme>(schm);
+  return std::make_shared<ds::HivePartitionScheme>(schm);
 }
 
 // [[arrow::export]]
-std::shared_ptr<arrow::dataset::Dataset> dataset___Dataset__create(
-    const std::vector<std::shared_ptr<arrow::dataset::DataSource>>& sources,
-    const std::shared_ptr<arrow::Schema>& schm) {
-  return std::make_shared<arrow::dataset::Dataset>(sources, schm);
+std::shared_ptr<ds::Dataset> dataset___Dataset__create(
+    const ds::DataSourceVector& sources, const std::shared_ptr<arrow::Schema>& schm) {
+  return VALUE_OR_STOP(ds::Dataset::Make(sources, schm));
 }
 
 // [[arrow::export]]
 std::shared_ptr<arrow::Schema> dataset___Dataset__schema(
-    const std::unique_ptr<arrow::dataset::Dataset>& ds) {
+    const std::shared_ptr<ds::Dataset>& ds) {
   return ds->schema();
 }
 
 // [[arrow::export]]
-std::unique_ptr<arrow::dataset::ScannerBuilder> dataset___Dataset__NewScan(
-    const std::shared_ptr<arrow::dataset::Dataset>& ds) {
-  std::unique_ptr<arrow::dataset::ScannerBuilder> out;
-  STOP_IF_NOT_OK(ds->NewScan(&out));
-  return out;
+std::shared_ptr<ds::ScannerBuilder> dataset___Dataset__NewScan(
+    const std::shared_ptr<ds::Dataset>& ds) {
+  return VALUE_OR_STOP(ds->NewScan());
 }
 
 // [[arrow::export]]
-void dataset___ScannerBuilder__Project(
-    const std::unique_ptr<arrow::dataset::ScannerBuilder>& sb,
-    const std::vector<std::string>& cols) {
+void dataset___ScannerBuilder__Project(const std::shared_ptr<ds::ScannerBuilder>& sb,
+                                       const std::vector<std::string>& cols) {
   STOP_IF_NOT_OK(sb->Project(cols));
 }
 
 // [[arrow::export]]
-void dataset___ScannerBuilder__Filter(
-    const std::unique_ptr<arrow::dataset::ScannerBuilder>& sb,
-    const std::shared_ptr<arrow::dataset::Expression>& expr) {
-  STOP_IF_NOT_OK(sb->Filter(expr));
+void dataset___ScannerBuilder__Filter(const std::shared_ptr<ds::ScannerBuilder>& sb,
+                                      const std::shared_ptr<ds::Expression>& expr) {
+  // Expressions converted from R's expressions are typed with R's native type,
+  // i.e. double, int64_t and bool.
+  auto cast_filter = VALUE_OR_STOP(InsertImplicitCasts(*expr, *sb->schema()));
+  STOP_IF_NOT_OK(sb->Filter(cast_filter));
 }
 
 // [[arrow::export]]
-void dataset___ScannerBuilder__UseThreads(
-    const std::unique_ptr<arrow::dataset::ScannerBuilder>& sb, bool threads) {
+void dataset___ScannerBuilder__UseThreads(const std::shared_ptr<ds::ScannerBuilder>& sb,
+                                          bool threads) {
   STOP_IF_NOT_OK(sb->UseThreads(threads));
 }
 
 // [[arrow::export]]
 std::shared_ptr<arrow::Schema> dataset___ScannerBuilder__schema(
-    const std::unique_ptr<arrow::dataset::ScannerBuilder>& sb) {
+    const std::shared_ptr<ds::ScannerBuilder>& sb) {
   return sb->schema();
 }
 
 // [[arrow::export]]
-std::unique_ptr<arrow::dataset::Scanner> dataset___ScannerBuilder__Finish(
-    const std::unique_ptr<arrow::dataset::ScannerBuilder>& sb) {
-  std::unique_ptr<arrow::dataset::Scanner> out;
-  STOP_IF_NOT_OK(sb->Finish(&out));
-  return out;
+std::shared_ptr<ds::Scanner> dataset___ScannerBuilder__Finish(
+    const std::shared_ptr<ds::ScannerBuilder>& sb) {
+  return VALUE_OR_STOP(sb->Finish());
 }
 
 // [[arrow::export]]
 std::shared_ptr<arrow::Table> dataset___Scanner__ToTable(
-    const std::unique_ptr<arrow::dataset::Scanner>& scn) {
-  std::shared_ptr<arrow::Table> out;
-  STOP_IF_NOT_OK(scn->ToTable(&out));
-  return out;
+    const std::shared_ptr<ds::Scanner>& scanner) {
+  return VALUE_OR_STOP(scanner->ToTable());
 }
 
 #endif

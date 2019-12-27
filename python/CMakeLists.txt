@@ -60,6 +60,7 @@ endif()
 if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
   option(PYARROW_BUILD_CUDA "Build the PyArrow CUDA support" OFF)
   option(PYARROW_BUILD_FLIGHT "Build the PyArrow Flight integration" OFF)
+  option(PYARROW_BUILD_DATASET "Build the PyArrow Dataset integration" OFF)
   option(PYARROW_BUILD_GANDIVA "Build the PyArrow Gandiva integration" OFF)
   option(PYARROW_BUILD_PARQUET "Build the PyArrow Parquet integration" OFF)
   option(PYARROW_PARQUET_USE_SHARED "Rely on parquet shared libraries where relevant" ON)
@@ -85,7 +86,6 @@ endif(CCACHE_FOUND)
 #
 
 include(BuildUtils)
-include(CompilerInfo)
 
 # Cython generated code emits way to many warnings at CHECKIN and EVERYTHING
 set(BUILD_WARNING_LEVEL "PRODUCTION")
@@ -96,13 +96,7 @@ include(SetupCxxFlags)
 set(CMAKE_CXX_FLAGS "${CXX_COMMON_FLAGS} ${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${PYARROW_CXXFLAGS}")
 
-if(NOT MSVC)
-  # Enable perf and other tools to work properly
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
-
-  # Suppress Cython warnings
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-variable -Wno-maybe-uninitialized")
-else()
+if(MSVC)
   # MSVC version of -Wno-return-type-c-linkage
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4190")
 
@@ -117,18 +111,25 @@ else()
   # See https://github.com/cython/cython/issues/2731. Change introduced in
   # Cython 0.29.1 causes "unsafe use of type 'bool' in operation"
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4804")
-endif()
+else()
+  # Enable perf and other tools to work properly
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
 
-if("${COMPILER_FAMILY}" STREQUAL "clang")
-  # Cython warnings in clang
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-parentheses-equality")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-constant-logical-operand")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-missing-declarations")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-sometimes-uninitialized")
+  # Suppress Cython warnings
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-variable -Wno-maybe-uninitialized")
 
-  # We have public Cython APIs which return C++ types, which are in an extern
-  # "C" blog (no symbol mangling) and clang doesn't like this
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-return-type-c-linkage")
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"
+     OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # Cython warnings in clang
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-parentheses-equality")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-constant-logical-operand")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-missing-declarations")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-sometimes-uninitialized")
+
+    # We have public Cython APIs which return C++ types, which are in an extern
+    # "C" blog (no symbol mangling) and clang doesn't like this
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-return-type-c-linkage")
+  endif()
 endif()
 
 # For any C code, use the same flags.
@@ -377,6 +378,10 @@ if(PYARROW_BUILD_S3)
   set(CYTHON_EXTENSIONS ${CYTHON_EXTENSIONS} _s3fs)
 endif()
 
+if(PYARROW_BUILD_HDFS)
+  set(CYTHON_EXTENSIONS ${CYTHON_EXTENSIONS} _hdfs)
+endif()
+
 if(PYARROW_BUILD_CUDA)
   # Arrow CUDA
   find_package(ArrowCUDA REQUIRED)
@@ -389,6 +394,22 @@ if(PYARROW_BUILD_CUDA)
   endif()
   set(CUDA_LINK_LIBS arrow_cuda_shared)
   set(CYTHON_EXTENSIONS ${CYTHON_EXTENSIONS} _cuda)
+endif()
+
+# Dataset
+if(PYARROW_BUILD_DATASET)
+  # Arrow Dataset
+  find_package(ArrowDataset REQUIRED)
+
+  if(PYARROW_BUNDLE_ARROW_CPP)
+    bundle_arrow_lib(ARROW_DATASET_SHARED_LIB SO_VERSION ${ARROW_SO_VERSION})
+    if(MSVC)
+      bundle_arrow_import_lib(ARROW_DATASET_IMPORT_LIB)
+    endif()
+  endif()
+
+  set(DATASET_LINK_LIBS arrow_dataset_shared)
+  set(CYTHON_EXTENSIONS ${CYTHON_EXTENSIONS} _dataset)
 endif()
 
 if(PYARROW_BUILD_PARQUET)
@@ -561,6 +582,10 @@ endif()
 
 if(PYARROW_BUILD_FLIGHT)
   target_link_libraries(_flight ${FLIGHT_LINK_LIBS})
+endif()
+
+if(PYARROW_BUILD_DATASET)
+  target_link_libraries(_dataset ${DATASET_LINK_LIBS})
 endif()
 
 if(PYARROW_BUILD_GANDIVA)

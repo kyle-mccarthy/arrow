@@ -19,16 +19,13 @@ add_custom_target(arrow_dataset)
 
 arrow_install_all_headers("arrow/dataset")
 
-arrow_add_pkg_config("arrow-dataset")
-
-arrow_install_cmake_find_module("ArrowDataset")
-
 set(ARROW_DATASET_SRCS
     dataset.cc
     discovery.cc
     file_base.cc
     filter.cc
     partition.cc
+    projector.cc
     scanner.cc)
 
 set(ARROW_DATASET_LINK_STATIC arrow_static)
@@ -42,6 +39,10 @@ if(ARROW_PARQUET)
 endif()
 
 add_arrow_lib(arrow_dataset
+              CMAKE_PACKAGE_NAME
+              ArrowDataset
+              PKG_CONFIG_NAME
+              arrow-dataset
               OUTPUTS
               ARROW_DATASET_LIBRARIES
               SOURCES

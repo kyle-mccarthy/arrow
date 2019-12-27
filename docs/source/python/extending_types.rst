@@ -43,14 +43,15 @@ define the ``__arrow_array__`` method to return an Arrow array::
             return pyarrow.array(..., type=type)
 
 The ``__arrow_array__`` method takes an optional `type` keyword which is passed
-through from :func:`pyarrow.array`.
+through from :func:`pyarrow.array`. The method is allowed to return either
+a :class:`~pyarrow.Array` or a :class:`~pyarrow.ChunkedArray`.
 
 
 Defining extension types ("user-defined types")
 -----------------------------------------------
 
 Arrow has the notion of extension types in the metadata specification as a
-possiblity to extend the built-in types. This is done by annotating any of the
+possibility to extend the built-in types. This is done by annotating any of the
 built-in Arrow logical types (the "storage type") with a custom type name and
 optional serialized representation ("ARROW:extension:name" and
 "ARROW:extension:metadata" keys in the Field’s custom_metadata of an IPC
@@ -248,7 +249,7 @@ Using the pandas period type from above as example, this would look like::
 
 Secondly, the pandas ``ExtensionDtype`` on its turn needs to have the
 ``__from_arrow__`` method implemented: a method that given a pyarrow Array
-or ChunkedArray of the extesion type can construct the corresponding
+or ChunkedArray of the extension type can construct the corresponding
 pandas ``ExtensionArray``. This method should have the following signature::
 
 
@@ -258,5 +259,5 @@ pandas ``ExtensionArray``. This method should have the following signature::
         def __from_arrow__(self, array: pyarrow.Array/ChunkedArray) -> pandas.ExtensionArray:
             ...
 
-This way, you can control the conversion of an pyarrow ``Array`` of your pyarrow
+This way, you can control the conversion of a pyarrow ``Array`` of your pyarrow
 extension type to a pandas ``ExtensionArray`` that can be stored in a DataFrame.

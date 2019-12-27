@@ -26,7 +26,8 @@
 
 #include "arrow/buffer.h"
 #include "arrow/json/options.h"
-#include "arrow/util/stl.h"
+#include "arrow/util/logging.h"
+#include "arrow/util/make_unique.h"
 #include "arrow/util/string_view.h"
 
 namespace arrow {
@@ -45,7 +46,7 @@ static size_t ConsumeWhitespace(string_view view) {
 #else
   auto ws_count = view.find_first_not_of(" \t\r\n");
   if (ws_count == string_view::npos) {
-    return 0;
+    return view.size();
   } else {
     return ws_count;
   }
