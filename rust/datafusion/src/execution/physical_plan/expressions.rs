@@ -910,6 +910,7 @@ macro_rules! boolean_op {
 }
 
 fn str_cmp(left: ArrayRef, right: ArrayRef, op: &Operator) -> Result<ArrayRef> {
+    dbg!("str_cmp called");
     let lhs = left
         .as_any()
         .downcast_ref::<StringArray>()
@@ -934,11 +935,14 @@ fn str_cmp(left: ArrayRef, right: ArrayRef, op: &Operator) -> Result<ArrayRef> {
 
     let cmp_op = cmp_op?;
 
-    let null_bit_buffer = match (left.data().null_bitmap(), right.data().null_bitmap()) {
+    let l_bm = left.data().null_bitmap().clone();
+    let r_bm = right.data().null_bitmap().clone();
+
+    let null_bit_buffer = match (l_bm, r_bm) {
         (None, None) => None,
-        (Some(l), None) => Some(l.clone().to_buffer()),
-        (None, Some(r)) => Some(r.clone().to_buffer()),
-        (Some(l), Some(r)) => Some((l & r).expect("failed").to_buffer()),
+        (Some(l), None) => Some(l.to_buffer()),
+        (None, Some(r)) => Some(r.to_buffer()),
+        (Some(l), Some(r)) => Some((l.buffer_ref() & r.buffer_ref()).expect("failed")),
     };
 
     let mut values = Vec::with_capacity(left.len());
@@ -951,7 +955,7 @@ fn str_cmp(left: ArrayRef, right: ArrayRef, op: &Operator) -> Result<ArrayRef> {
         DataType::Boolean,
         left.len(),
         None,
-        null_bit_buffer,
+        None,
         left.offset(),
         vec![Buffer::from(values.to_byte_slice())],
         vec![],

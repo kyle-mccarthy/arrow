@@ -60,7 +60,7 @@ fn main() -> Result<()> {
         true,
     );
 
-    let sql = "SELECT c1, MIN(c12), MAX(c12) FROM aggregate_test_100 WHERE c11 > 0.1 AND c11 < 0.9 GROUP BY c1";
+    let sql = "SELECT c1, MIN(c12), MAX(c12) FROM aggregate_test_100 WHERE c11 > 0.1 AND c11 < 0.9 AND c1 = 'd' GROUP BY c1";
 
     // create the query plan
     let plan = ctx.create_logical_plan(&sql)?;
