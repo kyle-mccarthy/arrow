@@ -25,24 +25,23 @@ use crate::error::{ExecutionError, Result};
 use crate::execution::physical_plan::common::get_scalar_value;
 use crate::execution::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use crate::logicalplan::{Operator, ScalarValue};
-use arrow::array::{ArrayData, PrimitiveArray};
 use arrow::array::{
-    ArrayRef, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array,
+    Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array,
     Int64Array, Int8Array, StringArray, UInt16Array, UInt32Array, UInt64Array,
     UInt8Array,
 };
+use arrow::array::{ArrayData, PrimitiveArray};
 use arrow::array::{
-    Float32Builder, Float64Builder, Int16Builder, Int32Builder, Int64Builder,
-    Int8Builder, StringBuilder, UInt16Builder, UInt32Builder, UInt64Builder,
-    UInt8Builder,
+    BooleanBufferBuilder, BufferBuilderTrait, Float32Builder, Float64Builder,
+    Int16Builder, Int32Builder, Int64Builder, Int8Builder, StringBuilder, UInt16Builder,
+    UInt32Builder, UInt64Builder, UInt8Builder,
 };
-use arrow::buffer::Buffer;
 use arrow::compute;
 use arrow::compute::kernels::arithmetic::{add, divide, multiply, subtract};
 use arrow::compute::kernels::boolean::{and, or};
 use arrow::compute::kernels::cast::cast;
 use arrow::compute::kernels::comparison::{eq, gt, gt_eq, lt, lt_eq, neq};
-use arrow::datatypes::{BooleanType, DataType, Schema, ToByteSlice};
+use arrow::datatypes::{BooleanType, DataType, Schema};
 use arrow::record_batch::RecordBatch;
 
 /// Represents the column at a given index in a RecordBatch
@@ -420,6 +419,7 @@ impl AggregateExpr for Max {
             }
             DataType::Float32 => Ok(DataType::Float32),
             DataType::Float64 => Ok(DataType::Float64),
+            DataType::Utf8 => Ok(DataType::Utf8),
             other => Err(ExecutionError::General(format!(
                 "MAX does not support {:?}",
                 other
@@ -440,14 +440,14 @@ impl AggregateExpr for Max {
     }
 }
 
-macro_rules! max_accumulate {
-    ($SELF:ident, $VALUE:expr, $ARRAY_TYPE:ident, $SCALAR_VARIANT:ident, $TY:ty) => {{
-        $SELF.max = match $SELF.max {
+macro_rules! build_accumulate {
+    ($SELF:ident, $PROP:ident, $VALUE:expr, $ARRAY_TYPE:ident, $SCALAR_VARIANT:ident, $TY:ty, $CURRENT:expr, $CMP:expr, $INTO_SCALAR_FN:expr) => {{
+        $SELF.$PROP = match $CURRENT {
             Some(ScalarValue::$SCALAR_VARIANT(n)) => {
-                if n > ($VALUE as $TY) {
-                    Some(ScalarValue::$SCALAR_VARIANT(n))
+                if $CMP(n, $VALUE) {
+                    Some(ScalarValue::$SCALAR_VARIANT($INTO_SCALAR_FN(n)))
                 } else {
-                    Some(ScalarValue::$SCALAR_VARIANT($VALUE as $TY))
+                    Some(ScalarValue::$SCALAR_VARIANT($INTO_SCALAR_FN($VALUE)))
                 }
             }
             Some(_) => {
@@ -455,10 +455,31 @@ macro_rules! max_accumulate {
                     "Unexpected ScalarValue variant".to_string(),
                 ))
             }
-            None => Some(ScalarValue::$SCALAR_VARIANT($VALUE as $TY)),
+            None => Some(ScalarValue::$SCALAR_VARIANT($INTO_SCALAR_FN($VALUE))),
         };
     }};
 }
+
+macro_rules! max_accumulate {
+    ($SELF:ident, $VALUE:expr, $ARRAY_TYPE:ident, $SCALAR_VARIANT:ident, $TY:ty) => {{
+        fn into_type_fn<T: Into<$TY>>(v: T) -> $TY {
+            (v).into()
+        };
+
+        build_accumulate!(
+            $SELF,
+            max,
+            $VALUE,
+            $ARRAY_TYPE,
+            $SCALAR_VARIANT,
+            $TY,
+            $SELF.max,
+            |lhs, rhs| lhs > (rhs as $TY),
+            &into_type_fn
+        );
+    }};
+}
+
 struct MaxAccumulator {
     max: Option<ScalarValue>,
 }
@@ -468,7 +489,7 @@ impl Accumulator for MaxAccumulator {
         if let Some(value) = value {
             match value {
                 ScalarValue::Int8(value) => {
-                    max_accumulate!(self, value, Int8Array, Int64, i64);
+                    max_accumulate!(self, value, Int8Array, Int64, i64)
                 }
                 ScalarValue::Int16(value) => {
                     max_accumulate!(self, value, Int16Array, Int64, i64)
@@ -496,6 +517,23 @@ impl Accumulator for MaxAccumulator {
                 }
                 ScalarValue::Float64(value) => {
                     max_accumulate!(self, value, Float64Array, Float64, f64)
+                }
+                ScalarValue::Utf8(value) => {
+                    match &self.max {
+                        Some(ScalarValue::Utf8(curr_max)) => {
+                            if &value > curr_max {
+                                self.max = Some(ScalarValue::Utf8(value));
+                            }
+                        }
+                        Some(_) => {
+                            return Err(ExecutionError::InternalError(
+                                "Unexpected ScalarValue variant".to_string(),
+                            ))
+                        }
+                        None => {
+                            self.max = Some(ScalarValue::Utf8(value));
+                        }
+                    };
                 }
                 other => {
                     return Err(ExecutionError::General(format!(
@@ -619,6 +657,7 @@ impl AggregateExpr for Min {
             }
             DataType::Float32 => Ok(DataType::Float32),
             DataType::Float64 => Ok(DataType::Float64),
+            DataType::Utf8 => Ok(DataType::Utf8),
             other => Err(ExecutionError::General(format!(
                 "MIN does not support {:?}",
                 other
@@ -641,23 +680,24 @@ impl AggregateExpr for Min {
 
 macro_rules! min_accumulate {
     ($SELF:ident, $VALUE:expr, $ARRAY_TYPE:ident, $SCALAR_VARIANT:ident, $TY:ty) => {{
-        $SELF.min = match $SELF.min {
-            Some(ScalarValue::$SCALAR_VARIANT(n)) => {
-                if n < ($VALUE as $TY) {
-                    Some(ScalarValue::$SCALAR_VARIANT(n))
-                } else {
-                    Some(ScalarValue::$SCALAR_VARIANT($VALUE as $TY))
-                }
-            }
-            Some(_) => {
-                return Err(ExecutionError::InternalError(
-                    "Unexpected ScalarValue variant".to_string(),
-                ))
-            }
-            None => Some(ScalarValue::$SCALAR_VARIANT($VALUE as $TY)),
+        fn into_type_fn<T: Into<$TY>>(v: T) -> $TY {
+            (v).into()
         };
+
+        build_accumulate!(
+            $SELF,
+            min,
+            $VALUE,
+            $ARRAY_TYPE,
+            $SCALAR_VARIANT,
+            $TY,
+            $SELF.min,
+            |lhs, rhs| lhs < (rhs as $TY),
+            &into_type_fn
+        )
     }};
 }
+
 struct MinAccumulator {
     min: Option<ScalarValue>,
 }
@@ -696,6 +736,17 @@ impl Accumulator for MinAccumulator {
                 ScalarValue::Float64(value) => {
                     min_accumulate!(self, value, Float64Array, Float64, f64)
                 }
+                ScalarValue::Utf8(value) => build_accumulate!(
+                    self,
+                    min,
+                    &value,
+                    StringArray,
+                    Utf8,
+                    String,
+                    &self.min,
+                    |lhs, rhs| lhs < rhs,
+                    |val: &Arc<String>| val.clone()
+                ),
                 other => {
                     return Err(ExecutionError::General(format!(
                         "MIN does not support {:?}",
@@ -864,6 +915,7 @@ macro_rules! compute_op {
             .as_any()
             .downcast_ref::<$DT>()
             .expect("compute_op failed to downcast array");
+
         Ok(Arc::new($OP(&ll, &rr)?))
     }};
 }
@@ -910,7 +962,6 @@ macro_rules! boolean_op {
 }
 
 fn str_cmp(left: ArrayRef, right: ArrayRef, op: &Operator) -> Result<ArrayRef> {
-    dbg!("str_cmp called");
     let lhs = left
         .as_any()
         .downcast_ref::<StringArray>()
@@ -935,8 +986,8 @@ fn str_cmp(left: ArrayRef, right: ArrayRef, op: &Operator) -> Result<ArrayRef> {
 
     let cmp_op = cmp_op?;
 
-    let l_bm = left.data().null_bitmap().clone();
-    let r_bm = right.data().null_bitmap().clone();
+    let l_bm = lhs.data().null_bitmap().clone();
+    let r_bm = rhs.data().null_bitmap().clone();
 
     let null_bit_buffer = match (l_bm, r_bm) {
         (None, None) => None,
@@ -945,19 +996,19 @@ fn str_cmp(left: ArrayRef, right: ArrayRef, op: &Operator) -> Result<ArrayRef> {
         (Some(l), Some(r)) => Some((l.buffer_ref() & r.buffer_ref()).expect("failed")),
     };
 
-    let mut values = Vec::with_capacity(left.len());
+    let mut values = BooleanBufferBuilder::new(left.len());
 
-    for i in 0..left.len() {
-        values.push(cmp_op(lhs.value(i), rhs.value(i)));
+    for i in 0..lhs.len() {
+        values.append(cmp_op(lhs.value(i), rhs.value(i)))?;
     }
 
     let data = ArrayData::new(
         DataType::Boolean,
-        left.len(),
+        lhs.len(),
         None,
-        None,
-        left.offset(),
-        vec![Buffer::from(values.to_byte_slice())],
+        null_bit_buffer,
+        lhs.offset(),
+        vec![values.finish()],
         vec![],
     );
 
@@ -996,6 +1047,7 @@ impl PhysicalExpr for BinaryExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ArrayRef> {
         let left = self.left.evaluate(batch)?;
         let right = self.right.evaluate(batch)?;
+
         if left.data_type() != right.data_type() {
             return Err(ExecutionError::General(format!(
                 "Cannot evaluate binary expression {:?} with types {:?} and {:?}",
@@ -1006,17 +1058,7 @@ impl PhysicalExpr for BinaryExpr {
         }
 
         match left.data_type() {
-            DataType::Utf8 => {
-                if left.data_type() != right.data_type() {
-                    return Err(ExecutionError::General(format!(
-                        "Cannot evaluate string literal expression {:?} with types {:?} and {:?}",
-                        self.op,
-                        left.data_type(),
-                        right.data_type()
-                   )));
-                }
-                str_cmp(left, right, &self.op)
-            }
+            DataType::Utf8 => str_cmp(left, right, &self.op),
             _ => match &self.op {
                 Operator::Lt => binary_array_op!(left, right, lt),
                 Operator::LtEq => binary_array_op!(left, right, lt_eq),

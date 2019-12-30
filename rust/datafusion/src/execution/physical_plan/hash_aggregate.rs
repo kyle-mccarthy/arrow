@@ -192,11 +192,21 @@ macro_rules! group_array_from_map_entries {
 /// value)
 macro_rules! aggr_array_from_map_entries {
     ($BUILDER:ident, $TY:ident, $TY2:ty, $MAP:expr, $COL_INDEX:expr) => {{
+        aggr_array_from_map_entries!(
+            $BUILDER,
+            $TY,
+            $TY2,
+            $MAP,
+            $COL_INDEX,
+            |builder: &mut $BUILDER, n| builder.append_value(n as $TY2)
+        )
+    }};
+    ($BUILDER:ident, $TY:ident, $TY2:ty, $MAP:expr, $COL_INDEX:expr, $APPEND_FN:expr) => {{
         let mut builder = $BUILDER::new($MAP.len());
         let mut err = false;
         for v in $MAP.values() {
             match v[$COL_INDEX].as_ref().borrow().get_value()? {
-                Some(ScalarValue::$TY(n)) => builder.append_value(n as $TY2).unwrap(),
+                Some(ScalarValue::$TY(n)) => $APPEND_FN(&mut builder, n).unwrap(),
                 None => builder.append_null().unwrap(),
                 _ => err = true,
             }
@@ -269,11 +279,14 @@ type AccumulatorSet = Vec<Rc<RefCell<dyn Accumulator>>>;
 
 macro_rules! update_accumulators {
     ($ARRAY:ident, $ARRAY_TY:ident, $SCALAR_TY:expr, $COL:expr, $ACCUM:expr) => {{
+        update_accumulators!($ARRAY, $ARRAY_TY, $SCALAR_TY, $COL, $ACCUM, |value| value)
+    }};
+    ($ARRAY:ident, $ARRAY_TY:ident, $SCALAR_TY:expr, $COL:expr, $ACCUM:expr, $INTO_SCALAR_FN:expr) => {{
         let primitive_array = $ARRAY.as_any().downcast_ref::<$ARRAY_TY>().unwrap();
 
         for row in 0..$ARRAY.len() {
             if $ARRAY.is_valid(row) {
-                let value = Some($SCALAR_TY(primitive_array.value(row)));
+                let value = Some($SCALAR_TY($INTO_SCALAR_FN(primitive_array.value(row))));
                 let mut accum = $ACCUM[row][$COL].borrow_mut();
                 accum.accumulate_scalar(value)?;
             }
@@ -286,6 +299,7 @@ impl BatchIterator for GroupedHashAggregateIterator {
         self.schema.clone()
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn next(&mut self) -> Result<Option<RecordBatch>> {
         if self.finished {
             return Ok(None);
@@ -422,6 +436,14 @@ impl BatchIterator for GroupedHashAggregateIterator {
                         col,
                         accumulators
                     ),
+                    DataType::Utf8 => update_accumulators!(
+                        array,
+                        StringArray,
+                        ScalarValue::Utf8,
+                        col,
+                        accumulators,
+                        |s: &str| Arc::new(s.to_string())
+                    ),
                     other => {
                         return Err(ExecutionError::ExecutionError(format!(
                             "Unsupported data type {:?} for result of aggregate expression",
@@ -521,6 +543,15 @@ impl BatchIterator for GroupedHashAggregateIterator {
                     DataType::Float64 => {
                         aggr_array_from_map_entries!(Float64Builder, Float64, f64, map, i)
                     }
+                    DataType::Utf8 => aggr_array_from_map_entries!(
+                        StringBuilder,
+                        Utf8,
+                        String,
+                        map,
+                        i,
+                        |builder: &mut StringBuilder, s: Arc<String>| builder
+                            .append_value(&s)
+                    ),
                     _ => Err(ExecutionError::ExecutionError(
                         "Unsupported aggregate expr".to_string(),
                     )),
