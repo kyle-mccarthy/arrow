@@ -1735,6 +1735,36 @@ mod tests {
     }
 
     #[test]
+    fn max_utf8() -> Result<()> {
+        let schema = Schema::new(vec![Field::new("a", DataType::Utf8, false)]);
+
+        let a = StringArray::from(vec!["a", "b", "c", "d", "e"]);
+        let batch = RecordBatch::try_new(Arc::new(schema.clone()), vec![Arc::new(a)])?;
+
+        assert_eq!(
+            do_max(&batch)?,
+            Some(ScalarValue::Utf8(Arc::new("e".to_string())))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn min_utf8() -> Result<()> {
+        let schema = Schema::new(vec![Field::new("a", DataType::Utf8, false)]);
+
+        let a = StringArray::from(vec!["a", "b", "c", "d", "e"]);
+        let batch = RecordBatch::try_new(Arc::new(schema.clone()), vec![Arc::new(a)])?;
+
+        assert_eq!(
+            do_min(&batch)?,
+            Some(ScalarValue::Utf8(Arc::new("a".to_string())))
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn count_elements() -> Result<()> {
         let schema = Schema::new(vec![Field::new("a", DataType::Int32, false)]);
         let a = Int32Array::from(vec![1, 2, 3, 4, 5]);

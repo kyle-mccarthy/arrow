@@ -183,6 +183,11 @@ pub fn get_scalar_value(array: &ArrayRef, row: usize) -> Result<Option<ScalarVal
                 .unwrap();
             Some(ScalarValue::Float64(array.value(row)))
         }
+        DataType::Utf8 => {
+            let array = array.as_any().downcast_ref::<array::StringArray>().unwrap();
+            Some(ScalarValue::Utf8(Arc::new(array.value(row).to_string())))
+        }
+
         other => {
             return Err(ExecutionError::ExecutionError(format!(
                 "Unsupported data type {:?} for result of aggregate expression",
